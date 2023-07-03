@@ -1,7 +1,8 @@
-
+# импорты
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.utils import get_random_id
+import datetime
 
 from config import comunity_token, acces_token
 from core import VkTools
@@ -13,6 +14,7 @@ class BotInterface():
         self.interface = vk_api.VkApi(token=comunity_token)
         self.api = VkTools(acces_token)
         self.params = None
+        self.offset = 0
 
     def message_send(self, user_id, message, attachment=None):
         self.interface.method(
@@ -24,10 +26,24 @@ class BotInterface():
                 'random_id': get_random_id()
             })
 
+    def check_date(self, command):
+        try:
+            datetime.datetime.strptime(command, "%d.%m.%Y")
+            return True
+        except ValueError:
+            return False
+
     def take_user(self, users, event):
+        stop = True
         user = users.pop()
-        while read_users(engine, self.params['id'], user['id']):
-            user = users.pop()
+
+        while read_users(engine, self.params['id'], user['id']) and stop:
+            if users:
+                user = users.pop()
+            else:
+                stop = False
+                return self.message_send(event.user_id, 'Анкеты кончились, попробуйте начать поиск заново')
+
         photos_user = self.api.get_photos(user['id'])
 
         add_user(engine, self.params['id'], user['id'])
@@ -39,6 +55,7 @@ class BotInterface():
 
     def event_handler(self):
         longpoll = VkLongPoll(self.interface)
+        users = []
 
         for event in longpoll.listen():
             if event.type == VkEventType.MESSAGE_NEW and event.to_me:
@@ -63,54 +80,30 @@ class BotInterface():
                                 '(Напишите название города такой командой (Город.(название города)))'
                             )
                         else:
-                            users = self.api.serch_users(self.params)
-                            user = users.pop()
-                            while read_users(engine, self.params['id'], user['id']):
-                                user = users.pop()
-
-                            photos_user = self.api.get_photos(user['id'])
-
-                            add_user(engine, self.params['id'], user['id'])
-
-                            self.message_send(
-                                event.user_id,
-                                f'Встречайте {user["name"]} https://vk.com/id{user["id"]}',
-                                attachment=photos_user
-                            )
+                            if users:
+                                self.take_user(users, event)
+                            else:
+                                self.offset += 50
+                                users = self.api.serch_users(self.params, self.offset)
+                                self.take_user(users, event)
                     else:
                         self.message_send(event.user_id, 'Для начала давайте поздороваемся. (Напиши мне привет)')
 
-                elif len(command.split('.')) == 3:
-                    if command.split('.')[0].isdigit() and command.split('.')[1].isdigit() and command.split('.')[2].isdigit():
-                        if int(command.split('.')[0]) > 31:
-                            self.message_send(event.user_id, 'Неверно введена дата')
-                        elif int(command.split('.')[1]) > 12:
-                            self.message_send(event.user_id, 'Неверно введена дата')
-                        else:
-                            self.params['bdate'] = command
-                            self.message_send(event.user_id, 'Давайте начнем поиск (напишите команду поиск)')
+                elif self.check_date(command):
+                    if self.params:
+                        self.params['bdate'] = command
+                        self.message_send(event.user_id, 'Давайте начнем поиск (напишите команду поиск)')
                     else:
-                        self.message_send(event.user_id, 'Неверно введена дата')
+                        self.message_send(event.user_id, 'Для начала давайте поздороваемся. (Напиши мне привет)')
 
                 elif command.split('.')[0] == 'город':
                     city_name = command.split('.')[1]
                     city = self.api.get_city_id(city_name)
                     if city:
                         self.params['city'] = city['id']
-                        self.message_send(event.user_id, 'Давайте начнем поиск (напишите команду поиск)')
+                        self.message_send(event.user_id, 'Давайте начнем поиск (напишите команду найти новые анкеты)')
                     else:
                         self.message_send(event.user_id, 'Такого города не существует')
-
-                elif command == 'ещё' or command == 'еще':
-                    if self.params:
-                        if users:
-                            self.take_user(users, event)
-                        else:
-                            self.offset += 50
-                            users = self.api.serch_users(self.params, self.offset)
-                            self.take_user(users, event)
-                    else:
-                        self.message_send(event.user_id, 'Для начала давайте поздороваемся. (Напиши мне привет)')
 
                 elif command == 'сменить город':
                     self.message_send(
@@ -119,12 +112,20 @@ class BotInterface():
                         '(Напишите название города такой командой (Город.(название города)))'
                     )
 
+                elif command == 'найти новые анкеты':
+                    if self.params:
+                        self.offset += 50
+                        users = self.api.serch_users(self.params, self.offset)
+                        self.take_user(users, event)
+                    else:
+                        self.message_send(event.user_id, 'Для начала давайте поздороваемся. (Напиши мне привет)')
+
                 elif command == 'команды':
                     self.message_send(
                         event.user_id,
                         'привет - обязательно надо поздороваться. \n'
                         'поиск - начинаем искать вторую половинку) \n'
-                        'ещё - просмотр следующей кандидатуры. \n'
+                        'найти новые анкеты - поиск новых анкет \n'
                         'пока - завершение работы (после этой команды снова надо поздороваться) \n'
                         'сменить город - меняет город поиска'
                     )
@@ -140,3 +141,4 @@ class BotInterface():
 if __name__ == '__main__':
     bot = BotInterface(comunity_token, acces_token)
     bot.event_handler()
+
